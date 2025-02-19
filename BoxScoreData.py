@@ -16,7 +16,7 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.width', 1000)
 
-conn = sqlite3.connect('NBADataTest.db')
+conn = sqlite3.connect('NBAData.db')
 nicknames = {
     'Jimmy Butler': 'Jimmy Butler III',
     'Alexandre Sarr': 'Alex Sarr',
@@ -31,7 +31,7 @@ curr = conn.cursor()
 
 statTypes = ('RA', 'Paint', 'Mid', 'Corner3', 'AB3')
 statTypesTypes = ('m', 'a', 'p')
-ARTypes = ('passes','assist', 'PA', 'APp', 'rebounds', 'CRB', 'CRBp', 'RBC', 'RBCp')
+ARTypes = ('passes','assists', 'PA', 'APp', 'rebounds', 'CRB', 'CRBp', 'RBC', 'RBCp')
 
 class Box:
     def __init__(self):
@@ -173,7 +173,7 @@ class Box:
                     if found:
                         break  # Break out of the outer loop
                     else:
-                        print(f'{self.name} does not exist trying again') 
+                        print(f'{self.name} does not exist shooting trying again') 
                         raise Exception("Shooter not found")
                 except Exception as e:
                     print('reset')
@@ -290,10 +290,9 @@ class Box:
                     except Exception as e:
                         print(f"Error handling popup: {e}")
                     tries += 1
-            try:
-                element['gamesPlayed'] = int(element['gamesPlayed']) + 1
-            except Exception as e:
-                element['gamesPlayed'] = 1
+            with conn:
+                curr.execute('Select * from data where name = :name', {'name': element['name']})
+                element['gamesPlayed'] = len(curr.fetchall()) + 1
             element['gameId']  = self.lastReadGame - self.firstgame + 1
     
     def CommitStatSheet(self):
@@ -326,7 +325,7 @@ class Box:
             self.name = element['name']
             with conn:
                 gp = element['gamesPlayed']
-                if gp > 9:
+                if gp > 5:
                     results = {
                         'team' : element['opponent'],
                         'opponent' : element['name'],
@@ -337,7 +336,7 @@ class Box:
                         'primaryDef' : element['matchupName1']
                     }
                     stats = {}
-                    curr.execute('Select * from data where name = :name)', {'name': self.name})
+                    curr.execute('Select * from data where name = :name', {'name': self.name})
                     logs = curr.fetchall()
                     for log in logs:
                         n = 13
@@ -352,14 +351,18 @@ class Box:
                     for type in statTypes:
                         for typetype in statTypesTypes:
                             catName = type + typetype 
-                            results['Z' + catName] = (element[catName] - statistics.mean(stats[catName])) / statistics.stdev(stats[catName])
-                            element['Z' + catName] = results['Z' + catName]
+                            if statistics.stdev(stats[catName]) == 0:
+                                results['Z' + catName] = 0
+                                element['Z' + catName] = results['Z' + catName]
+                            else:
+                                results['Z' + catName] = (float(element[catName]) - statistics.mean(stats[catName])) / statistics.stdev(stats[catName])
+                                element['Z' + catName] = results['Z' + catName]
                     curr.execute("""INSERT INTO teamAnalytics (
                         team, opponent, oppTeam, position, win, home, primaryDef, 
                         ZRAm, ZRAa, ZRAp, ZPaintm, ZPainta, ZPaintp, 
                         ZMidm, ZMida, ZMidp, ZCorner3m, ZCorner3a, ZCorner3p, 
                         ZAB3m, ZAB3a, ZAB3p) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
                         (
                         results["team"], results["opponent"], results['oppTeam'], results["position"], 
                         bool(results["win"]), bool(results["home"]), results["primaryDef"],  
@@ -374,7 +377,7 @@ class Box:
             self.name = element['name']
             with conn:
                 gp = element['gamesPlayed']
-                if gp > 9:
+                if gp > 5:
                     results = {
                         'team' : element['opponent'],
                         'opponent' : element['name'],
@@ -396,15 +399,19 @@ class Box:
                                 stats[ARType].append(log[n])
                                 n += 1
                     for ARType in ARTypes:
-                         results['Z' + ARType] = (element[ARType] - statistics.mean(stats[ARType])) / statistics.stdev(stats[ARType])
-                         element['Z' + ARType] = results['Z' + ARType]
+                        if statistics.stdev(stats[ARType]) == 0:
+                            results['Z' + ARType] = 0
+                            element['Z' + ARType] = results['Z' + ARType]
+                        else:
+                            results['Z' + ARType] = (float(element[ARType]) - statistics.mean(stats[ARType])) / statistics.stdev(stats[ARType])
+                            element['Z' + ARType] = results['Z' + ARType]
                     curr.execute("""INSERT INTO teamARAnalytics (
                         team, opponent, oppTeam, position, win, home, primaryDef, 
                         Zpasses, Zassists, ZPA, ZAPp, Zrebounds, 
                         ZCRB, ZCRBp, ZRBC, ZRBCp) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
                         (
-                        results["team"], results["opponent"], results["position"], 
+                        results["team"], results["opponent"], results['oppTeam'], results["position"], 
                         bool(results["win"]), bool(results["home"]), results["primaryDef"],  
                         float(results["Zpasses"]), float(results["Zassists"]), float(results["ZPA"]), 
                         float(results["ZAPp"]), float(results["Zrebounds"]), float(results["ZCRB"]), 
@@ -415,7 +422,8 @@ class Box:
             self.name = element['name']
             with conn:
                 gp = element['gamesPlayed']
-                if gp > 9:
+                curr.execute('Select * from teamARAnalytics where team = :name and position = :pos', {'name': element['opponent'], 'pos' : element['position']})
+                if gp > 9 and (len(curr.fetchall()) >= 2):
                     results = {
                         'name' : self.name,
                         'team' : element['team'],
@@ -426,23 +434,26 @@ class Box:
                         'primaryDef' : element['matchupName1']
                     }
                     stats = {}
-                    curr.execute('Select * from teamARAnalytics where (team = :name) and (position = :pos)', {'name': element['opponent'], 'pos' : element['position']})
+                    curr.execute('Select * from teamARAnalytics where team = :name and position = :pos', {'name': element['opponent'], 'pos' : element['position']})
                     logs = curr.fetchall()
                     for log in logs:
-                        n = 7
-                        while n <= 14:
+                        n = 8
+                        while n <= 16:
                             for ARType in ARTypes:
-                                if ARType not in stats:
-                                     stats[ARType] = []
+                                if ('Z' + ARType) not in stats:
+                                     stats['Z' + ARType] = []
                                 stats['Z' + ARType].append(log[n])
                                 n += 1
                     for ARType in ARTypes:
-                         results['ZZ' + ARType] = (element['Z' + ARType] - statistics.mean(stats['Z' + ARType])) / statistics.stdev(stats['Z' + ARType])
+                        if statistics.stdev(stats['Z' + ARType]) == 0:
+                                results['ZZ' + ARType] = 0
+                        else:
+                            results['ZZ' + ARType] = (float(element['Z' + ARType]) - statistics.mean(stats['Z' + ARType])) / statistics.stdev(stats['Z' + ARType])
                     curr.execute("""INSERT INTO playerARAnalytics (
-                        name, player, team, opponent, position, win, home, primaryDef, 
+                        name, team, opponent, position, win, home, primaryDef, 
                         ZZpasses, ZZassists, ZZPA, ZZAPp, ZZrebounds, 
                         ZZCRB, ZZCRBp, ZZRBC, ZZRBCp) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
                         (
                         results['name'], results["team"], results["opponent"], results["position"], 
                         bool(results["win"]), bool(results["home"]), results["primaryDef"],  
@@ -456,7 +467,8 @@ class Box:
             self.name = element['name']
             with conn:
                 gp = element['gamesPlayed']
-                if gp > 9:
+                curr.execute('Select * from teamAnalytics where team = :name and position = :pos', {'name': element['opponent'], 'pos' : element['position']})
+                if gp > 9 and (len(curr.fetchall()) >= 2):
                     results = {
                         'name' : self.name,
                         'team' : element['team'],
@@ -467,15 +479,15 @@ class Box:
                         'primaryDef' : element['matchupName1']
                     }
                     stats = {}
-                    curr.execute('Select * from team Analytics where (team = :name) and (position = :pos)', {'name': element['opponent'], 'pos' : element['position']})
+                    curr.execute('Select * from teamAnalytics where team = :name and position = :pos', {'name': element['opponent'], 'pos' : element['position']})
                     logs = curr.fetchall()
                     for log in logs:
-                        n = 7
-                        while n <= 20:
+                        n = 8
+                        while n <= 22:
                             for type in statTypes:
                                 for typetype in statTypesTypes:
                                     catName = type + typetype 
-                                    if catName not in stats:
+                                    if ('Z' + catName) not in stats:
                                         stats['Z' + catName] = []
                                     stats['Z' + catName].append(float(log[n]))
                                     n += 1
@@ -485,13 +497,13 @@ class Box:
                             if statistics.stdev(stats['Z' + catName]) == 0:
                                 results['ZZ' + catName] = 0
                             else:
-                                results['ZZ' + catName] = (element['Z' + catName] - statistics.mean(stats['Z' + catName])) / statistics.stdev(stats['Z' + catName])
+                                results['ZZ' + catName] = (float(element['Z' + catName]) - statistics.mean(stats['Z' + catName])) / statistics.stdev(stats['Z' + catName])
                     curr.execute("""INSERT INTO playerAnalytics (
                         name, team, opponent, position, win, home, primaryDef, 
                         ZZRAm, ZZRAa, ZZRAp, ZZPaintm, ZZPainta, ZZPaintp, 
                         ZZMidm, ZZMida, ZZMidp, ZZCorner3m, ZZCorner3a, ZZCorner3p, 
                         ZZAB3m, ZZAB3a, ZZAB3p) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",    
                         (
                         results['name'], results["team"], results["opponent"], results["position"], 
                         bool(results["win"]), bool(results["home"]), results["primaryDef"],  
@@ -501,7 +513,7 @@ class Box:
                         float(results["ZZCorner3m"]), float(results["ZZCorner3a"]), float(results["ZZCorner3p"]), 
                         float(results["ZZAB3m"]), float(results["ZZAB3a"]), float(results["ZZAB3p"])))
 f = 1
-while f < 100:
+while f <= 364:
     scrape = Box()
     scrape.BoxScoreScraper()
     scrape.DateScrape()

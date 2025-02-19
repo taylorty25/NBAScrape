@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 import sqlite3
 
-conn = sqlite3.connect('NBADataTest.db')
+conn = sqlite3.connect('NBAData.db')
 curr = conn.cursor()
 curr.execute('CREATE TABLE IF NOT EXISTS lastGamePlayed(lastGameNum int)')
 curr.execute('insert into lastGamePlayed (lastGameNum) values (?)', (22400061,))
@@ -118,7 +118,7 @@ curr.execute('''create table if not exists teamARAnalytics(
              ZRBCp real)''')
 curr.execute('''create table if not exists playerAnalytics(
              id INTEGER PRIMARY KEY AUTOINCREMENT,
-             player text,
+             name text,
              team text,
              opponent text,
              position text,
