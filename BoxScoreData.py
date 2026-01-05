@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 import sqlite3
 import statistics
+import re
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.width', 1000)
@@ -29,7 +30,7 @@ nicknames = {
 PATH = "C:\\Program Files (x86)\\chromedriver.exe"
 service = Service(executable_path=PATH)
 # First game of the season id in NBA Database
-firstgame = 22400061
+firstgame = 22500001
 curr = conn.cursor()
 # NBA Zone Stat Types
 statTypes = ('RA', 'Paint', 'Mid', 'Corner3', 'AB3', 'FT')
@@ -48,82 +49,106 @@ class Box:
     def __init__(self):
         # connect to DB and read the last game read from the database
         with conn:
+            curr.execute('SELECT * FROM lastWeekPlayed')
+            # assign self id
+            self.lastReadWeek = int(curr.fetchone()[0])
             curr.execute('SELECT * FROM lastGamePlayed')
             # assign self id
-            self.lastReadGame = int(curr.fetchone()[0])
+            self.lastRead = int(curr.fetchone()[0])
         # assign urls to self for future use using game id
-        self.boxScoreUrl = f'https://www.nba.com/game/00{self.lastReadGame}/box-score'
-        self.overviewUrl = f'https://www.nba.com/game/00{self.lastReadGame}'
-        self.matchupUrl = f'https://www.nba.com/game/00{self.lastReadGame}/box-score?dir=D&sort=matchupMinutesSort&type=matchups'
+        self.WeekUrl = f'https://www.nba.com/schedule?cal={self.lastReadWeek}&pd=false&region=1&season=Regular%20Season'
+        self.gameint = 0
         self.date = ''
         self.name = ''
         self.position = ''
         # assign empty dictionary to self to retain information through scanning
         self.statSheet = []
-        self.firstgame = 22400061
+        self.firstgame = 22500001
         self.n = 0
         self.driver = webdriver.Chrome(service=service)
     
+    def WeekScrape(self):
+        self.driver.get(scrape.WeekUrl)
+        self.driver.maximize_window()
+        WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.ID, 'onetrust-close-btn-container'))).click()
+        games = WebDriverWait(self.driver, 10).until(EC.visibility_of_all_elements_located((By.CLASS_NAME, 'ScheduleGame_sg__RmD9I')))
+        if not self.lastRead < len(games):
+            return True
+        game = games[self.lastRead]
+        bslink = WebDriverWait(game, 10).until(EC.element_to_be_clickable((By.LINK_TEXT, 'BOX SCORE')))
+        time.sleep(2)
+        bslink.click()
+        time.sleep(2)
+        url = self.driver.current_url.split('/')[-2]
+        code = url.split('-')[-1]
+        self.lastReadGame = code
+        print(self.lastReadGame)
+        return False
+
+        
     # scrape dat and team information for future use
     def DateScrape(self):
-        try:
-            # open url via driver
-            self.driver.get(self.overviewUrl)
-            # wait for s to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_all_elements_located((By.CLASS_NAME, 'MatchupCard_team__a_Pzk')))
-            # assign date element via webdriver
-            date_element = self.driver.find_element(By.XPATH, '//*[@id="__next"]/div[2]/div[2]/div[3]/div[2]/div[2]/section[2]/div/div[2]/div[2]')
-            # parse date element, store as self date variable
-            self.date = datetime.strptime(date_element.text, '%B %d, %Y')
-            # assign scores pointer via webdriver
-            scores = self.driver.find_elements(By.CLASS_NAME, 'MatchupCard_team__a_Pzk')
-            if len(scores) >= 2:
-                self.away_points = int(scores[0].text)
-                self.home_points = int(scores[1].text)
-                self.awayWin = self.away_points > self.home_points
-                self.homeWin = self.home_points > self.away_points
-                for element in self.statSheet:
-                    self.home = element['home']
-                    self.away = not self.home
-                    self.win = ((self.away) and (self.awayWin)) or ((self.home) and (self.homeWin))
-                    self.loss = not self.win
-                    element['win'] = self.win
-        except Exception as e:
-            print(f"Error fetching game data: {e}")
+        self.overviewUrl = f'https://www.nba.com/game/{self.lastReadGame}'
+        # open url via driver
+        self.driver.get(self.overviewUrl)
+        # wait for s to load
+        WebDriverWait(self.driver, 15).until(
+            EC.presence_of_all_elements_located((By.CLASS_NAME, 'MatchupCard_team__a_Pzk')))
+        # assign date element via webdriver
+        date_element = WebDriverWait(self.driver, 15).until(EC.presence_of_element_located((By.XPATH, '//p[contains(@class,"GameHeroTime_time")]')))
+        # parse date element, store as self date variable
+        print(date_element.text)
+        date_str = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', date_element.text)
+        self.date = datetime.strptime(date_str, '%A, %B %d, %Y')
+        print(self.date)
+        m, d, y = self.date.strftime("%m"), self.date.strftime("%d"), self.date.strftime("%y")
+        print(m + d + y)
+        # assign scores pointer via webdriver
+        scores = self.driver.find_elements(By.CLASS_NAME, 'MatchupCard_team__a_Pzk')
+        if len(scores) >= 2:
+            self.away_points = int(scores[0].text)
+            self.home_points = int(scores[1].text)
+            self.awayWin = self.away_points > self.home_points
+            self.homeWin = self.home_points > self.away_points
+            for element in self.statSheet:
+                self.home = element['home']
+                self.away = not self.home
+                self.win = ((self.away) and (self.awayWin)) or ((self.home) and (self.homeWin))
+                self.loss = not self.win
+                element['win'] = self.win
 
     # obtain personal data such as name, position, and FreeThrow information
     def BoxScoreScraper(self):
-        try:
-            # get url via driver
-            self.driver.get(self.boxScoreUrl)
-            # wait for elements to load
-            WebDriverWait(self.driver, 10).until(EC.visibility_of_all_elements_located((By.TAG_NAME, 'td')))
-            # assign team names pointer via webdriver
-            teamNames = self.driver.find_elements(By.CLASS_NAME, 'GameBoxscoreTeamHeader_gbt__b9B6g')
-            # assign team pointer via webdriver
-            teams = self.driver.find_elements(By.CLASS_NAME, 'GameBoxscore_gbTableSection__zTOUg')
-            # assing away and home teams from the perspective of each player in current game
-            self.awayTeamName = teamNames[0].text
-            self.homeTeamName = teamNames[1].text
-            # parse through the teams
-            for index, team in enumerate(teams):
-                players = team.find_elements(By.XPATH, './/div[2]/div[2]/div/table/tbody/*')[:5]
-                if index == 0:
-                    self.away = True
-                    self.team = self.awayTeamName
-                    self.opponent = self.homeTeamName
-                    self.home = not self.away
-                else:
-                    self.away = False
-                    self.team = self.homeTeamName
-                    self.opponent = self.awayTeamName
-                    self.home = not self.away
-                # parse through each player
-                for player in players:
-                    try:
-                        name = player.find_element(By.CLASS_NAME, 'GameBoxscoreTablePlayer_gbpNameFull__cf_sn').text
-                        position = player.find_element(By.CLASS_NAME, 'GameBoxscoreTablePlayer_gbpPos__KW2Nf').text
+        self.boxUrl = f'https://www.nba.com/game/{self.lastReadGame}/box-score#box-score'
+        self.driver.get(self.boxUrl)
+        WebDriverWait(self.driver, 10).until(EC.visibility_of_all_elements_located((By.TAG_NAME, 'td')))
+        # assign team names pointer via webdriver
+        teamNames = self.driver.find_elements(By.CLASS_NAME, 'GameBoxscoreTeamHeader_gbt__b9B6g')
+        # assign team pointer via webdriver
+        teams = self.driver.find_elements(By.CLASS_NAME, 'GameBoxscore_gbTableSection__zTOUg')
+        # assing away and home teams from the perspective of each player in current game
+        self.awayTeamName = teamNames[0].text
+        self.homeTeamName = teamNames[1].text
+        # parse through the teams
+        for index, team in enumerate(teams):
+            players = team.find_elements(By.XPATH, './/div[2]/div[2]/div/table/tbody/*')[:5]
+            if index == 0:
+                self.away = True
+                self.team = self.awayTeamName
+                self.opponent = self.homeTeamName
+                self.home = not self.away
+            else:
+                self.away = False
+                self.team = self.homeTeamName
+                self.opponent = self.awayTeamName
+                self.home = not self.away
+            # parse through each player
+            for player in players:
+                try:
+                    name = player.find_element(By.CLASS_NAME, 'GameBoxscoreTablePlayer_gbpNameFull__cf_sn').text
+                    position = player.find_element(By.CLASS_NAME, 'GameBoxscoreTablePlayer_gbpPos__KW2Nf').text
+                    mins, secs = player.find_element(By.XPATH, './/td[2]').text.split(':')
+                    if int(mins) >= 20:
                         self.statSheet.append({
                             'name': name,
                             'team': self.team,
@@ -132,11 +157,11 @@ class Box:
                             'home': self.home,
                             'FTm' : player.find_element(By.XPATH, './/td[9]').text,
                             'FTa' : player.find_element(By.XPATH, './/td[10]').text,
-                            'FTp' : player.find_element(By.XPATH, './/td[11]').text,})
-                    except Exception as e:
-                        print(f"Error fetching player data: {e}")
-        except Exception as e:
-            print(f"Error loading box score page: {e}")     
+                            'FTp' : player.find_element(By.XPATH, './/td[11]').text,
+                            'rebounds': player.find_element(By.XPATH, './/td[14]').text,
+                            'assists': player.find_element(By.XPATH, './/td[15]').text,})
+                except Exception as e:
+                    print(f"Error fetching player data: {e}")     
 
     # obtain personal matchup data including name, mins, and points
     def MatchupScraper(self):
@@ -144,6 +169,7 @@ class Box:
             # for each player in the statsheet find the top matchup's data
             for index, element in enumerate(self.statSheet):
                 # get matchup url via driver
+                self.matchupUrl = f'https://www.nba.com/game/{self.lastReadGame}/box-score?dir=D&sort=matchupMinutesSort&type=matchups'
                 self.driver.get(self.matchupUrl)
                 waiter = WebDriverWait(self.driver, 10)
                 # wait for elements to load
@@ -170,6 +196,9 @@ class Box:
                     element['matchupName' + str(index + 1)] = self.matchupName
                     element['matchupMins' + str(index + 1)] = self.matchupMins
                     element['matchupPoints' + str(index + 1)] = self.matchupPoints
+                
+            self.length = len(self.statSheet)
+
         except Exception as e:
             print(f'Error fetching matchup data: {e}')
 
@@ -178,177 +207,168 @@ class Box:
         # load date into variables
         m, d, y = self.date.strftime("%m"), self.date.strftime("%d"), self.date.strftime("%y")
         # shorten advanced stats of full season shooting to one performance by using date variables in url
-        shootingScraperUrl = f'https://www.nba.com/stats/players/shooting?DistanceRange=By+Zone&DateFrom={m}%2F{d}%2F{y}&DateTo={m}%2F{d}%2F{y}'
+        shootingScraperUrl = f'https://www.nba.com/stats/players/shooting?DistanceRange=By+Zone&DateFrom={m}%2F{d}%2F20{y}&DateTo={m}%2F{d}%2F20{y}'
         wait = WebDriverWait(self.driver, 10)
+
+        # Load the page once
+        self.driver.get(shootingScraperUrl)
+
+        # Close ad popup if it appears
+        #try:
+        #    ad = WebDriverWait(self.driver, 60).until(EC.element_to_be_clickable((By.ID, 'bx-close-inside-3084920')))
+        #    ad.click()
+        #except:
+        #    pass
+        time.sleep(5)
+        try:
+            dropdown = self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')
+            select = Select(dropdown)
+            select.select_by_index(0)
+        except:
+            pass
+        time.sleep(2)
         # for every player in statsheet try to collect advanced shooting information
         for element in self.statSheet:
             self.name = element['name']
-            mtries = 3
-            tries = 0
-            found = False
-            # repeat search a max of three times
-            while tries < mtries and not found:
-                try:
-                    # get shooting stats url via driver
-                    self.driver.get(shootingScraperUrl)
-                    try:
-                        # wait for elements to load
-                        wait.until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')))
-                        button = Select(self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select'))
-                        # select load all pages button to iterate through every player's stats that day
-                        button.select_by_value('-1')
-                    except Exception as e:
-                        pass
-                    shootingScrape = wait.until(EC.visibility_of_element_located((By.CLASS_NAME, 'Crom_body__UYOcU')))
-                    shootingScraper = shootingScrape.find_elements(By.XPATH, './*')
-                    # for every player in the Nba Database look for the current players name to find their stats
-                    for shooter in shootingScraper:
-                        name = shooter.find_element(By.XPATH, './/td[1]').text
-                        # if found collect data
-                        if self.name in name:
-                            found = True
-                            td = shooter.find_elements(By.TAG_NAME, 'td')
-                            n = 3
-                            while n <= 23:
-                                for type in statTypes:
-                                    for typetype in statTypesTypes:
-                                        catName = type + typetype 
-                                        if td[n].text == '-':   
-                                            element[catName] = 0.0
-                                        else:
-                                            element[catName] = td[n].text      
-                                        n = 18 if n == 11 else n + 1
-                            break  # Break out of the inner loop
-                    if found:
-                        break  # Break out of the outer loop
-                    else:
-                        print(f'{self.name} does not exist shooting trying again') 
-                        raise Exception("Shooter not found")
-                except Exception as e:
-                    print('reset')
-                    try:
-                        close_button = self.driver.find_element(By.ID, 'bx-close')  # Adjust selector
-                        close_button.click()  # Add parentheses to execute the click
-                        self.driver.execute_script("arguments[0].click();", close_button)
-                    except Exception as e:
-                        print(f"Error handling popup: {e}")
-                    tries += 1
+            print(self.name)
+            # DIRECTLY FIND THE PLAYER'S ROW USING XPATH - O(1) lookup
+            if "'" in self.name:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text()=\"{self.name}\"]]")
+            else:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text() = '{self.name}']]")
+            if player_rows:
+                player_row = player_rows[0]
+                print(f"Found {self.name}")
+                WebDriverWait(player_row, 10).until(EC.visibility_of_all_elements_located((By.TAG_NAME, "td")))
+                # Extract stats from the found row
+                td = player_row.find_elements(By.XPATH, './*')
+                self.n = 3
+                while self.n <= 23:
+                    for type in statTypes[:5]:
+                        for typetype in statTypesTypes:
+                            catName = type + typetype 
+                            stat = td[self.n].text
+                            if stat == '-':   
+                                element[catName] = 0.0
+                            else:
+                                element[catName] = stat     
+                            if self.n == 11:
+                                self.n = 18
+                            else:
+                                self.n += 1
 
     # obtain advanced assist stats
     def AssistScraper(self):
         m, d, y = self.date.strftime("%m"), self.date.strftime("%d"), self.date.strftime("%y")
-        assistScraperUrl = f'https://www.nba.com/stats/players/passing?DateFrom={m}%2F{d}%2F{y}&DateTo={m}%2F{d}%2F{y}'
+        assistScraperUrl = f'https://www.nba.com/stats/players/passing?DateFrom={m}%2F{d}%2F20{y}&DateTo={m}%2F{d}%2F20{y}'
         wait = WebDriverWait(self.driver, 10)
+
+        # Load the page once
+        self.driver.get(assistScraperUrl)
+
+        ## Close ad popup if it appears
+        #ad = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.ID, 'bx-close-inside-3084912')))
+        #try:
+        #    ad.click()
+        #except:
+        #    pass
+        
+        #try:
+        #    ad = WebDriverWait(self.driver, 60).until(EC.element_to_be_clickable((By.ID, 'bx-close-inside-3084912')))
+        #    ad.click()
+        #except:
+        #    pass
+        time.sleep(5)
+        try:
+            dropdown = self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')
+            select = Select(dropdown)
+            select.select_by_index(0)
+        except:
+            pass
+        time.sleep(2)
+        # for every player in statsheet try to collect advanced assist information
         for element in self.statSheet:
             self.name = element['name']
-            mtries = 3
-            tries = 0
-            found = False
-            while tries < mtries and not found:
-                try:
-                    self.driver.get(assistScraperUrl)
-                    try:
-                        wait.until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')))
-                        button = Select(self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select'))
-                        button.select_by_value('-1')
-                    except Exception as e:
-                        pass
-                    assistScrape = wait.until(EC.visibility_of_element_located((By.CLASS_NAME, 'Crom_body__UYOcU')))
-                    assistScraper = assistScrape.find_elements(By.XPATH, './*')
-                    for passer in assistScraper:
-                        name = passer.find_element(By.XPATH, './/td[1]').text
-                        if self.name in name:
-                            found = True
-                            element['passes'] = passer.find_element(By.XPATH, './/td[7]').text
-                            element['assists'] = passer.find_element(By.XPATH, './/td[9]').text
-                            element['PA'] = passer.find_element(By.XPATH, './/td[11]').text
-                            element['APp'] = passer.find_element(By.XPATH, './/td[15]').text
-                            break 
-                    if found:
-                        break  # Break out of the outer loop
-                    else:
-                        print(f'{self.name} does not exist trying again')
-                        if tries < 2:
-                            raise Exception("AR not working")
-                        else:
-                            element['passes'] = '0.0'
-                            element['assists'] = '0.0'
-                            element['PA'] = '0.0'
-                            element['APp'] = '0.0'
-                            tries += 1
-                except Exception as e:
-                    print('reset')
-                    try:
-                        close_button = self.driver.find_element(By.ID, 'bx-close')  # Adjust selector
-                        close_button.click()  # Add parentheses to execute the click
-                        self.driver.execute_script("arguments[0].click();", close_button)
-                    except Exception as e:
-                        print(f"Error handling popup: {e}")
-                    tries += 1
+
+            # DIRECTLY FIND THE PLAYER'S ROW USING XPATH - O(1) lookup
+            if "'" in self.name:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text()=\"{self.name}\"]]")
+            else:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text() = '{self.name}']]")
+            if player_rows:
+                player_row = player_rows[0]
+                WebDriverWait(player_row, 10).until(EC.visibility_of_all_elements_located((By.TAG_NAME, "td")))
+
+                # Extract stats from the found row
+                td = player_row.find_elements(By.XPATH, './*')
+                element['passes'] = td[6].text if td[6].text != '-' else '0.0'
+                element['PA'] = td[10].text if td[10].text != '-' else '0.0'
+                element['APp'] = td[13].text if td[13].text != '-' else '0.0'
+            else:
+                print(f'{self.name} not found in assist data')
+                element['passes'] = '0.0'
+                element['PA'] = '0.0'
+                element['APp'] = '0.0'
 
     # obtain advanced rebound stats
     def ReboundScraper(self):
         m, d, y = self.date.strftime("%m"), self.date.strftime("%d"), self.date.strftime("%y")
-        reboundingScraperUrl = f'https://www.nba.com/stats/players/rebounding?DateFrom={m}%2F{d}%2F{y}&DateTo={m}%2F{d}%2F{y}'
+        reboundingScraperUrl = f'https://www.nba.com/stats/players/rebounding?DateFrom={m}%2F{d}%2F20{y}&DateTo={m}%2F{d}%2F20{y}'
         wait = WebDriverWait(self.driver, 10)
+
+        # Load the page once
+        self.driver.get(reboundingScraperUrl)
+
+        #try:
+        #    ad = WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable((By.ID, 'bx-close-inside-3084912')))
+        #    ad.click()
+        #except:
+        #    pass
+        time.sleep(10)
+        try:
+            dropdown = self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')
+            select = Select(dropdown)
+            select.select_by_index(0)
+        except:
+            pass
+        time.sleep(2)
+        # for every player in statsheet try to collect advanced rebounding information
         for element in self.statSheet:
             self.name = element['name']
-            mtries = 3
-            tries = 0
-            found = False
-            while tries < mtries and not found:
-                try:
-                    self.driver.get(reboundingScraperUrl)
-                    try:
-                        wait.until(EC.element_to_be_clickable((By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select')))
-                        button = Select(self.driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div[2]/div[3]/section[2]/div/div[2]/div[2]/div[1]/div[3]/div/label/div/select'))
-                        button.select_by_value('-1')
-                    except Exception as e:
-                        pass
-                    reboundScrape = wait.until(EC.visibility_of_element_located((By.CLASS_NAME, 'Crom_body__UYOcU')))
-                    reboundScraper = reboundScrape.find_elements(By.XPATH, './*')
-                    for rebounder in reboundScraper:
-                        name = rebounder.find_element(By.XPATH, './/td[1]').text
-                        if self.name in name:
-                            found = True
-                            element['rebounds'] = rebounder.find_element(By.XPATH, './/td[7]').text
-                            element['CRB'] = rebounder.find_element(By.XPATH, './/td[8]').text
-                            element['CRBp'] = rebounder.find_element(By.XPATH, './/td[9]').text
-                            element['RBC'] = rebounder.find_element(By.XPATH, './/td[10]').text
-                            element['RBCp'] = rebounder.find_element(By.XPATH, './/td[13]').text
-                            element['RBd'] = rebounder.find_element(By.XPATH, './/td[14]').text
-                            break
-                    if found:
-                        break  # Break out of the outer loop
-                    else:
-                        print(f'{self.name} does not exist trying again')
-                        print(tries)
-                        if tries < 2:
-                            tries
-                            raise Exception("THIS SHIT STILL DONT WORK")
-                        else:
-                            element['rebounds'] = '0.0'
-                            element['CRB'] = '0.0'
-                            element['CRBp'] = '0.0'
-                            element['RBC'] = '0.0'
-                            element['RBCp'] = '0.0'
-                            element['RBd'] = '0.0'
-                            tries += 1
-                except Exception as e:
-                    print('reset')
-                    try:
-                        close_button = self.driver.find_element(By.ID, 'bx-close')  # Adjust selector
-                        close_button.click()  # Add parentheses to execute the click
-                        self.driver.execute_script("arguments[0].click();", close_button)
-                    except Exception as e:
-                        print(f"Error handling popup: {e}")
-                    tries += 1
-                    continue
+
+            # DIRECTLY FIND THE PLAYER'S ROW USING XPATH - O(1) lookup
+            if "'" in self.name:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text()=\"{self.name}\"]]")
+            else:
+                player_rows = self.driver.find_elements(By.XPATH, f"//tbody[@class='Crom_body__UYOcU']//tr[.//a[text() = '{self.name}']]")
+            if player_rows:
+                player_row = player_rows[0]
+                print(f"Found {self.name} in rebound data")
+                WebDriverWait(player_row, 10).until(EC.visibility_of_all_elements_located((By.TAG_NAME, "td")))
+                # Extract stats from the found row
+                td = player_row.find_elements(By.XPATH, './*')
+                element['CRB'] = td[7].text if td[7].text != '-' else '0.0'
+                element['CRBp'] = td[8].text if td[8].text != '-' else '0.0'
+                element['RBC'] = td[9].text if td[9].text != '-' else '0.0'
+                element['RBCp'] = td[10].text if td[10].text != '-' else '0.0'
+                element['RBd'] = td[11].text if td[11].text != '-' else '0.0'
+            else:
+                print(f'{self.name} not found in rebound data')
+                element['CRB'] = '0.0'
+                element['CRBp'] = '0.0'
+                element['RBC'] = '0.0'
+                element['RBCp'] = '0.0'
+                element['RBd'] = '0.0'
             with conn:
                 curr.execute('Select * from data where name = :name', {'name': element['name']})
                 element['gamesPlayed'] = len(curr.fetchall()) + 1
-            element['gameId']  = self.lastReadGame - self.firstgame + 1
-    
+                curr.execute('Select Max(gameId) from data')
+                max = curr.fetchone()[0]
+                if max == None:
+                    element['gameId']  = 1
+                else:
+                    element['gameId']  = max + 1
+
     # commit all stats to database
     def CommitStatSheet(self):
         for element in self.statSheet:
@@ -374,7 +394,7 @@ class Box:
     # update game id in DB
     def UpdateGameId(self):
         with conn:
-            curr.execute('UPDATE lastGamePlayed set lastGameNum = :lrg', {'lrg' : self.lastReadGame + 1} )
+            curr.execute('UPDATE lastGamePlayed set lastGameNum = :lrg', {'lrg' : self.lastRead + 1} )
 
     # create a seperate statsheet based on the performance on a player based on their averages via a z score to capture the teams defensive performance
     def TeamAnalytics(self):
@@ -613,11 +633,15 @@ class Box:
                         float(results["ZZCorner3m"]), float(results["ZZCorner3a"]), float(results["ZZCorner3p"]), 
                         float(results["ZZAB3m"]), float(results["ZZAB3a"]), float(results["ZZAB3p"]),
                         float(results["ZZFTm"]), float(results["ZZFTa"]), float(results["ZZFTp"])))
-f = 1
-while f <= 200:
-    # create child of box
-    scrape = Box()
-    # obtain
+
+z = 0              
+while z < 16:
+    scrape = Box()     
+    if scrape.WeekScrape():
+        with conn:
+            curr.execute('UPDATE lastWeekPlayed set lastWeekNum = :lrg', {'lrg' : scrape.lastReadWeek + 1} )
+            curr.execute('UPDATE lastGamePlayed set lastGameNum = :lrg', {'lrg' : 0} )
+        break
     scrape.BoxScoreScraper()
     # obtain date and team information
     scrape.DateScrape()
@@ -630,7 +654,7 @@ while f <= 200:
     # obtain game specific advanced rebound statistics
     scrape.ReboundScraper()
     # make sure every games statsheet has all 10 starter's information, if not exit the data gathering loop
-    if len(scrape.statSheet) != 10:
+    if len(scrape.statSheet) != scrape.length:
         break
     br = False
     for en in scrape.statSheet:
@@ -660,8 +684,7 @@ while f <= 200:
     # print currrent statsheet to terminal
     print(scrape.statSheet)
     # update game id
+    scrape.gameint += 1
     scrape.UpdateGameId()
     # close driver
     scrape.driver.close()
-    f += 1
-
